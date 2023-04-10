@@ -1,0 +1,117 @@
+import pandas as pd
+import os
+from datetime import date 
+from datetime import timedelta
+
+
+filepath = r'C:\Users\spi\OneDrive - Xperi\New\tba_automation\2021-10-06'
+
+file1 = 'data-1.xlsx'
+df1 = pd.read_excel(os.path.join(filepath,file1))
+file2 = 'data-2.xlsx'
+df2 = pd.read_excel(os.path.join(filepath,file2))
+
+#duplicate df2 for further calculation
+df3 = pd.read_excel(os.path.join(filepath,file2))
+
+#get unique date matching values between df1 and df2
+date1 = df1['Local Air Date']
+date1 = set(date1)
+date2 = df2['Local Air Date']
+date2 = set(date2)
+date_list = sorted(date1.intersection(date2))
+print('matching date = ' , date_list)
+
+#date matching len between two dataframes 
+df3['matching_date'] = df3['Local Air Date'].isin(date_list)
+df3 = df3[df3.matching_date.astype(str).str.contains('True')]
+#creating unique values on first and third dataframe
+df1['sourcedate'] = df1['source_name'].map(str)+df1['Local Air Date'].map(str)
+df3['sourcedate'] = df3['source_name'].map(str)+df3['Local Air Date'].map(str)
+df1 = df1.reset_index(drop=True)
+df3 = df3.reset_index(drop=True)
+
+print('processing validation_1....')
+
+#creating table to check the count of matching date between df1 and df3 same or not
+date_df = pd.DataFrame({'sourcedate':df3.sourcedate.unique()})
+
+date_df['sourcedate1'] = [len(set(df1['multiple_day_program_uid'].loc[df1['sourcedate'] == x['sourcedate']])) 
+    for _, x in date_df.iterrows()]
+date_df['sourcedate2'] = [len(set(df3['multiple_day_program_uid'].loc[df1['sourcedate'] == x['sourcedate']])) 
+    for _, x in date_df.iterrows()]
+
+#create unique_df1 only to get the source name for each sourcedate
+unique_df1 = df1.drop_duplicates('sourcedate')
+date_df['source_name'] = date_df['sourcedate'].map(unique_df1.set_index('sourcedate')['source_name'])
+
+#creating calculation..
+date_df['verified1'] = date_df['sourcedate1']+date_df['sourcedate2']
+date_df['verified2'] = date_df['sourcedate1']-date_df['sourcedate2']
+#filter and get the source list only when the len of records between twp dataframe is eqal for each source and date
+date_df = date_df[(date_df['verified1']>1)]
+date_df = date_df[(date_df['verified2']==0)]
+validation_1_source = date_df['source_name'].unique()
+validation_1_source_list = list(validation_1_source)
+print('validation_1_completed')
+print('# sources from validation_1 = ',len(validation_1_source_list))
+
+print('processing validation_2....')
+#Filter with two required choice from reason for tba and action_taken in df1
+required_df = df1[(df1['reason_for_tba']=='No_Info_from_Provider___Weekly') | (df1['reason_for_tba']=='No_Info_from_Provider___Monthly')]
+required_df = required_df.query('action_taken == "Kept As Is" | action_taken=="Reached Out to Provider"')
+required_df = required_df.reset_index(drop=True)
+#filter df3 file with source_list from validation_1
+df3['available_in_required_df'] = df3['source_name'].isin(validation_1_source_list)
+df3 = df3[df3.available_in_required_df.astype(str).str.contains('True')]
+#get the matching record with required_dy by mulitiple_day_program_uid 
+df3['available_in_required_df'] = df3['multiple_day_program_uid'].isin(required_df['multiple_day_program_uid'])
+df3 = df3[df3.available_in_required_df.astype(str).str.contains('True')]
+#get the reason for tba and action taken from requried_df
+df3['action_taken_from_upload1'] = df3['multiple_day_program_uid'].map(required_df.set_index('multiple_day_program_uid')['action_taken'])
+df3['reason_for_tba_from_upload1'] = df3['multiple_day_program_uid'].map(required_df.set_index('multiple_day_program_uid')['reason_for_tba'])
+
+#creating table to check if two choice available for validation source list
+choice_df = pd.DataFrame({'source_name':df3.source_name.unique()})
+choice_df['reason_for_tba_from_upload1'] = [list(set(df3['reason_for_tba_from_upload1'].loc[df3['source_name'] == x['source_name']])) 
+    for _, x in choice_df.iterrows()]
+choice_df['action_taken_from_upload1'] = [list(set(df3['action_taken_from_upload1'].loc[df3['source_name'] == x['source_name']])) 
+    for _, x in choice_df.iterrows()]
+choice_df['reason_for_tba_count'] = [len(set(df3['reason_for_tba_from_upload1'].loc[df3['source_name'] == x['source_name']])) 
+    for _, x in choice_df.iterrows()]
+choice_df['action_taken_count'] = [len(set(df3['action_taken_from_upload1'].loc[df3['source_name'] == x['source_name']])) 
+    for _, x in choice_df.iterrows()]
+#save mulitiple choice sources for further checking
+for_check_df = choice_df[(choice_df['action_taken_count']>1) | (choice_df['reason_for_tba_count']>1)]
+for_check_df.to_excel(r'C:\Users\spi\OneDrive - Xperi\New\tba_automation\for_check_df.xlsx',index = False)
+#filter source list for those choice is equal to 1
+choice_df = choice_df[(choice_df['reason_for_tba_count']==1)]
+choice_df = choice_df[(choice_df['action_taken_count']==1)]
+choice_df = choice_df.reset_index(drop=True)
+validated_source_table = pd.DataFrame(choice_df)
+validated_source_table = validated_source_table[['source_name','reason_for_tba_from_upload1','action_taken_from_upload1']].reset_index(drop=True)
+validation_2_source = validated_source_table['source_name']
+validation_2_source_list = list(validation_2_source)
+print('validatin_2 completed')
+print('# sources from validation_2 = ',len(validation_2_source_list))
+
+
+df2['validation_2_source'] = df2['source_name'].isin(validation_2_source_list)
+df2 = df2[df2.validation_2_source.astype(str).str.contains('True')]
+df2 = df2.reset_index(drop=True)
+
+today = date.today()
+start_date = today.strftime("%m/%d/%Y")
+end_date = today+timedelta(days=3)
+end_date = end_date.strftime("%m/%d/%Y")
+
+df2['after_four_days'] = df2['Local Air Date'] > end_date
+df2 = df2[df2.after_four_days.astype(str).str.contains('True')]
+df2 = df2.reset_index(drop=True) 
+
+df2['action_taken'] = df2['source_name'].map(validated_source_table.set_index('source_name')['action_taken_from_upload1'])
+df2['reason_for_tba'] = df2['source_name'].map(validated_source_table.set_index('source_name')['reason_for_tba_from_upload1'])
+
+final_df = df2.reset_index(drop=True)
+
+final_df.to_excel(r'C:\Users\spi\OneDrive - Xperi\New\tba_automation\final_df.xlsx',index = False)
